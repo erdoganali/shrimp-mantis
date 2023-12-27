@@ -1,7 +1,6 @@
 from fastapi import FastAPI, Form
-from fastapi.responses import JSONResponse
-import torch
 from ray import serve
+import torch
 from peft import PeftConfig, PeftModel
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 import bitsandbytes as bnb
@@ -14,10 +13,10 @@ minio_client = minio.Minio(
     secret_key="mlopssecret",
     secure=False
 )
+
 def download_files_from_minio(bucket_name, file_names, save_path):
     for file_name in file_names:
         minio_client.fget_object(bucket_name, file_name, save_path + "/" + file_name)
-
 
 class ModelConfigurator:
     def __init__(self):
@@ -61,6 +60,10 @@ class ModelConfigurator:
             )
             return output
 
+# FastAPI uygulaması
+app = FastAPI()
+
+# ModelDeployment Ray Serve Deployment'ı
 @serve.deployment
 class PlateauGenerationModel:
     def __init__(self):
@@ -69,8 +72,7 @@ class PlateauGenerationModel:
     async def __call__(self, prompt: str = Form(...)):
         return await self.model_configurator.generate(prompt)
 
-app = FastAPI()
-
+# APIIngress Ray Serve Deployment'ı
 @serve.deployment(route_prefix="/")
 @serve.ingress(app)
 class APIIngress:
@@ -80,14 +82,13 @@ class APIIngress:
     @app.post("/plateau-generation")
     async def generate_plateau(self, prompt: str = Form(...)):
         return await self.model_handle.remote(prompt)
- 
 
-# Ray Serve'ı başlat
-serve.start(detached=True)
+# Ray Serve'ı başlat ve Deploymentları uygula
+def main():
+    serve.start(detached=True)
+    model = PlateauGenerationModel.bind()
+    api_ingress = APIIngress.bind(model)
+    api_ingress.deploy()
 
-# Deploymentları başlat
-plateau_generation_model = PlateauGenerationModel.bind()
-api_ingress = APIIngress.bind(plateau_generation_model)
-
-# Define entrypoint
-app = api_ingress
+if __name__ == "__main__":
+    main()
